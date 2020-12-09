@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <locale.h>
@@ -34,9 +35,10 @@ static void set_color_for_state(cairo_t *cairo, struct swaylock_state *state,
 	}
 }
 
-static void timetext(struct swaylock_surface *surface, char **tstr, char **dstr) {
+static void timetext(struct swaylock_surface *surface, char **tstr, char **dstr, char **bstr) {
 	static char dbuf[256];
 	static char tbuf[256];
+	static char bbuf[8];
 
 	// Use user's locale for strftime calls
 	char *prevloc = setlocale(LC_TIME, NULL);
@@ -44,6 +46,29 @@ static void timetext(struct swaylock_surface *surface, char **tstr, char **dstr)
 
 	time_t t = time(NULL);
 	struct tm *tm = localtime(&t);
+
+    // Retrieve battery level
+    FILE *fptr;
+    int cur_level, max_level, percentage;
+    fptr = fopen("/sys/class/power_supply/BAT0/charge_now","r");
+    if(fptr == NULL)
+    {
+        printf("Error trying to open /sys/class/power_supply/BAT0/charge_now!");
+        exit(1);
+    }
+    fscanf(fptr, "%d", &cur_level);
+    fclose(fptr);
+    fptr = fopen("/sys/class/power_supply/BAT0/charge_full","r");
+    if(fptr == NULL)
+    {
+        printf("Error trying to open /sys/class/power_supply/BAT0/charge_full!");
+        exit(1);
+    }
+    fscanf(fptr, "%d", &max_level);
+    fclose(fptr);
+    percentage = cur_level * 100 / max_level;
+    sprintf(bbuf, "Bat:%d%%", percentage);
+    *bstr = bbuf;
 
 	if (surface->state->args.timestr[0]) {
 		strftime(tbuf, sizeof(tbuf), surface->state->args.timestr, tm);
@@ -227,6 +252,7 @@ void render_frame(struct swaylock_surface *surface) {
 		char *text = NULL;
 		char *text_l1 = NULL;
 		char *text_l2 = NULL;
+		char *text_b = NULL;
 		const char *layout_text = NULL;
 		double font_size;
 		char attempts[4]; // like i3lock: count no more than 999
@@ -264,7 +290,7 @@ void render_frame(struct swaylock_surface *surface) {
 					text = attempts;
 				}
 			} else if (state->args.clock) {
-				timetext(surface, &text_l1, &text_l2);
+				timetext(surface, &text_l1, &text_l2, &text_b);
 			}
 
 			xkb_layout_index_t num_layout = xkb_keymap_num_layouts(state->xkb.keymap);
@@ -284,7 +310,7 @@ void render_frame(struct swaylock_surface *surface) {
 			break;
 		default:
 			if (state->args.clock)
-				timetext(surface, &text_l1, &text_l2);
+				timetext(surface, &text_l1, &text_l2, &text_b);
 			break;
 		}
 
@@ -313,9 +339,9 @@ void render_frame(struct swaylock_surface *surface) {
 				new_width = extents.width;
 			}
 		} else if (text_l1 && text_l2) {
-			cairo_text_extents_t extents_l1, extents_l2;
-			cairo_font_extents_t fe_l1, fe_l2;
-			double x_l1, y_l1, x_l2, y_l2;
+			cairo_text_extents_t extents_l1, extents_l2, extents_b;
+			cairo_font_extents_t fe_l1, fe_l2, fe_b;
+			double x_l1, y_l1, x_l2, y_l2, x_b, y_b;
 
 			/* Top */
 
@@ -343,6 +369,25 @@ void render_frame(struct swaylock_surface *surface) {
 
 			cairo_move_to(cairo, x_l2, y_l2);
 			cairo_show_text(cairo, text_l2);
+			cairo_close_path(cairo);
+			cairo_new_sub_path(cairo);
+
+			if (new_width < extents_l1.width)
+				new_width = extents_l1.width;
+			if (new_width < extents_l2.width)
+				new_width = extents_l2.width;
+
+			/* Lower Bottom */
+			cairo_set_font_size(cairo, arc_radius / 6.0f);
+			cairo_text_extents(cairo, text_b, &extents_b);
+			cairo_font_extents(cairo, &fe_b);
+			x_b = (buffer_width / 2) -
+				(extents_b.width / 2 + extents_b.x_bearing);
+			y_b = (buffer_diameter / 2) +
+				(fe_b.height / 2 - fe_b.descent) + arc_radius / 1.5f;
+
+			cairo_move_to(cairo, x_b, y_b);
+			cairo_show_text(cairo, text_b);
 			cairo_close_path(cairo);
 			cairo_new_sub_path(cairo);
 
